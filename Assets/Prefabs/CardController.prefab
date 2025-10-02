@@ -1,0 +1,67 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &639125569639374949
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 639125569639374951}
+  - component: {fileID: 639125569639374948}
+  m_Layer: 0
+  m_Name: CardController
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 0
+--- !u!4 &639125569639374951
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 639125569639374949}
+  m_LocalRotation: {x: -0, y: -0, z: -0, w: 1}
+  m_LocalPosition: {x: 0.000061035156, y: 0.000030517578, z: 0}
+  m_LocalScale: {x: 0.99999994, y: 0.99999994, z: 0.99999994}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_RootOrder: 0
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &639125569639374948
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 639125569639374949}
+  m_Enabled: 0
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1d61b91beb619c647abfbae24aa77f3e, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  sprites:
+  - {fileID: 3976143452573863688, guid: ba8f69c6618dbc840bb4d17a9c7bde0f, type: 3}
+  - {fileID: 9163921811461820524, guid: ba8f69c6618dbc840bb4d17a9c7bde0f, type: 3}
+  - {fileID: -5171216584996700369, guid: ba8f69c6618dbc840bb4d17a9c7bde0f, type: 3}
+  - {fileID: 4183086236765076168, guid: ba8f69c6618dbc840bb4d17a9c7bde0f, type: 3}
+  - {fileID: -6635270514141571429, guid: ba8f69c6618dbc840bb4d17a9c7bde0f, type: 3}
+  - {fileID: -7872866908590503763, guid: ba8f69c6618dbc840bb4d17a9c7bde0f, type: 3}
+  - {fileID: 2995152251191745205, guid: ba8f69c6618dbc840bb4d17a9c7bde0f, type: 3}
+  - {fileID: -2905034666315720421, guid: ba8f69c6618dbc840bb4d17a9c7bde0f, type: 3}
+  cardPrefab: {fileID: 4629324084407020666, guid: dc3a578e6afa0b244b7a8474d1223fe9, type: 3}
+  gridTransform: {fileID: 0}
+  levels:
+  - levelName: easy
+    rows: 5
+    cols: 6
+  currentLevelIndex: 0
+  sfxSource: {fileID: 0}
+  flipClip: {fileID: 0}
+  matchClip: {fileID: 0}
+  mismatchClip: {fileID: 0}
+  gameOverClip: {fileID: 0}
