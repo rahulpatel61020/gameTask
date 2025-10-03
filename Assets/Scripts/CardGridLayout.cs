@@ -1,0 +1,74 @@
+﻿using System.Collections;
+using System.Collections.Generic;
+using UnityEngine;
+using UnityEngine.UI;
+
+public class CardGridLayout : LayoutGroup
+{
+    public int rows;
+    public int colums;
+
+    public Vector2 cardSize;
+    public Vector2 spacing;
+    public int preferredTopPadding;
+
+    public override void SetLayoutHorizontal() { }
+    public override void SetLayoutVertical() { }
+
+    public override void CalculateLayoutInputVertical()
+    {
+        if (rows == 0 || colums == 0)
+        {
+            rows = 2;
+            colums = 2;
+        }
+
+        float parentWidth = rectTransform.rect.width;
+        float parentHeight = rectTransform.rect.height;
+
+        float cardHeight = (parentHeight - 2 * preferredTopPadding - spacing.y * (rows - 1)) / rows;
+        float cardWidth = cardHeight;
+
+        if (cardWidth * colums + spacing.x * (colums - 1) > parentWidth)
+        {
+            cardWidth = (parentWidth - 2 * preferredTopPadding - (colums - 1) * spacing.x) / colums;
+            cardHeight = cardWidth;
+        }
+
+        // ✅ Apply shrink factor depending on grid size
+        int totalCards = rows * colums;
+        float shrinkFactor = 1.0f;
+
+        if (totalCards > 6 && totalCards <= 16) shrinkFactor = 0.9f;
+        else if (totalCards > 16 && totalCards <= 30) shrinkFactor = 0.8f;
+        else if (totalCards > 30) shrinkFactor = 0.7f;
+
+        cardWidth *= shrinkFactor;
+        cardHeight *= shrinkFactor;
+
+        // ✅ Limit maximum size so 2x2 doesn’t blow up
+        float maxSize = 300f;
+        cardWidth = Mathf.Min(cardWidth, maxSize);
+        cardHeight = Mathf.Min(cardHeight, maxSize);
+
+        cardSize = new Vector2(cardWidth, cardHeight);
+
+        // --- Padding to center grid ---
+        padding.left = Mathf.FloorToInt((parentWidth - colums * cardWidth - spacing.x * (colums - 1)) / 2);
+        padding.top = Mathf.FloorToInt((parentHeight - rows * cardHeight - spacing.y * (rows - 1)) / 2);
+        padding.bottom = padding.top;
+
+        for (int i = 0; i < rectChildren.Count; i++)
+        {
+            int rowCount = i / colums;
+            int coloumCount = i % colums;
+
+            var item = rectChildren[i];
+            var xPos = padding.left + cardSize.x * coloumCount + spacing.x * coloumCount;
+            var yPos = padding.top + cardSize.y * rowCount + spacing.y * rowCount;
+
+            SetChildAlongAxis(item, 0, xPos, cardSize.x);
+            SetChildAlongAxis(item, 1, yPos, cardSize.y);
+        }
+    }
+}
