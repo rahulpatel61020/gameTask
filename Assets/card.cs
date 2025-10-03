@@ -35,6 +35,11 @@ public class card : MonoBehaviour
         isSelcted = false;
         Flip(hiddeniconSprite);
     }
+    public void ShowInstant()
+    {
+        isSelcted = true;
+        iconimage.sprite = iconSprite; // immediately show the face
+    }
 
     private void Flip(Sprite newSprite)
     {
