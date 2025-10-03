@@ -139,28 +139,39 @@ public class CardManager : MonoBehaviour
         if (!c.isSelcted && !isChecking)
         {
             PlaySfx(flipClip);
-            c.Show();
-            openCards.Add(c);
-
-            // Don't count move here, wait until 2nd card
-            CheckOpenCards();
+            c.Show(() =>
+            {
+                // Only add AFTER the flip finishes
+                openCards.Add(c);
+                CheckOpenCards();
+            });
         }
     }
+ 
 
     private void CheckOpenCards()
     {
         if (openCards.Count < 2) return;
 
-        // ✅ A pair was attempted → count as 1 move
         moveCounter++;
         UpdateMoveUI();
 
         var a = openCards[openCards.Count - 2];
         var b = openCards[openCards.Count - 1];
 
-        if (!a.isSelcted) a.Show();
-        if (!b.isSelcted) b.Show();
+        // Make sure both cards flip fully before comparing
+        StartCoroutine(WaitForFlipThenCheck(a, b));
+    }
 
+    IEnumerator WaitForFlipThenCheck(card a, card b)
+    {
+        // ⏳ Wait until both finished animating
+        yield return new WaitUntil(() => !a.IsAnimating && !b.IsAnimating);
+
+        // Optional: small pause so both faces are visible
+        yield return new WaitForSeconds(0.1f);
+
+        // Now compare
         if (a.iconSprite == b.iconSprite)
         {
             PlaySfx(matchClip);
@@ -170,15 +181,15 @@ public class CardManager : MonoBehaviour
             StartCoroutine(DestroyPair(a, b));
 
             if (matchedPairs >= totalPairs)
-            {
                 GameOver();
-            }
         }
         else
         {
             StartCoroutine(HidePair(a, b));
         }
     }
+
+
 
     IEnumerator HidePair(card a, card b)
     {
@@ -198,10 +209,12 @@ public class CardManager : MonoBehaviour
         float popDuration = 0.2f;
         float shrinkDuration = 0.3f;
 
+        // Pop up animation
         LeanTween.scale(a.gameObject, Vector3.one * 1.2f, popDuration).setEaseOutBack();
         LeanTween.scale(b.gameObject, Vector3.one * 1.2f, popDuration).setEaseOutBack();
         yield return new WaitForSeconds(popDuration + 0.05f);
 
+        // FX
         if (matchEffectPrefab && gridTransform != null)
         {
             Canvas canvas = gridTransform.GetComponentInParent<Canvas>();
@@ -211,19 +224,24 @@ public class CardManager : MonoBehaviour
 
         yield return new WaitForSeconds(0.2f);
 
+        // Shrink animation
         LeanTween.scale(a.gameObject, Vector3.zero, shrinkDuration).setEaseInBack();
         LeanTween.scale(b.gameObject, Vector3.zero, shrinkDuration).setEaseInBack();
         yield return new WaitForSeconds(shrinkDuration);
 
+        // Leave blank slots but disable visuals & clicks
         a.GetComponent<Button>().interactable = false;
         b.GetComponent<Button>().interactable = false;
 
-        if (a.TryGetComponent<Image>(out var ai)) ai.enabled = false;
-        if (b.TryGetComponent<Image>(out var bi)) bi.enabled = false;
+        foreach (var img in a.GetComponentsInChildren<Image>()) img.enabled = false;
+        foreach (var img in b.GetComponentsInChildren<Image>()) img.enabled = false;
+
+        foreach (var img in b.GetComponentsInChildren<Image>()) img.enabled = false;
 
         openCards.Clear();
         isChecking = false;
     }
+
 
     private void SpawnFXOnCanvas(Canvas canvas, Vector3 worldPos)
     {
@@ -312,43 +330,57 @@ public class CardManager : MonoBehaviour
     }
 
     // --- Game Control ---
-    private void GameOver()
+ private void GameOver()
+{
+    timerRunning = false; // stop timer
+    PlaySfx(gameOverClip);
+
+    // --- Save High Score ---
+    LevelConfig config = levels[currentLevelIndex];
+    Difficulty diff = config.difficulty;
+
+    // Calculate score
+    int finalScore = HighScoreHelper.CalculateHighScore(
+        Mathf.FloorToInt(levelTimer),
+        moveCounter,
+        diff
+    );
+
+    // Get Player Name from PlayerPrefs or default
+    string playerName = PlayerPrefs.GetString("PlayerName", "Player");
+
+    // Load → Add → Save
+    HighScores hs = HighScoreHelper.LoadHighScores(diff);
+    ScoreEntry newEntry = new ScoreEntry(playerName, finalScore);
+    HighScoreHelper.AddHighScore(hs, newEntry);
+    HighScoreHelper.SaveHighScore(hs, diff);
+
+    // --- Show End Panel with animation ---
+    if (endgamepanel != null)
     {
-        timerRunning = false; // stop timer
-        PlaySfx(gameOverClip);
+        endgamepanel.SetActive(true);
 
-        // --- Save High Score ---
-        LevelConfig config = levels[currentLevelIndex];
-        Difficulty diff = config.difficulty;
-
-        // Calculate score
-        int finalScore = HighScoreHelper.CalculateHighScore(
-            Mathf.FloorToInt(levelTimer),
-            moveCounter,
-            diff
-        );
-
-        // Get Player Name from PlayerPrefs or default
-        string playerName = PlayerPrefs.GetString("PlayerName", "Player");
-
-        // Load → Add → Save
-        HighScores hs = HighScoreHelper.LoadHighScores(diff);
-        ScoreEntry newEntry = new ScoreEntry(playerName, finalScore);
-        HighScoreHelper.AddHighScore(hs, newEntry);
-        HighScoreHelper.SaveHighScore(hs, diff);
-
-        // --- Show End Panel ---
-        if (currentLevelIndex + 1 < levels.Count)
+        RectTransform rt = endgamepanel.GetComponent<RectTransform>();
+        if (rt != null)
         {
-            Debug.Log($"✅ LEVEL {levels[currentLevelIndex].levelName} COMPLETE!");
-            endgamepanel.SetActive(true);
-        }
-        else
-        {
-            Debug.Log("🏆 ALL LEVELS COMPLETE! GAME OVER!");
-            endgamepanel.SetActive(true);
+            // reset position offscreen first
+            rt.anchoredPosition = new Vector2(-1200f, 0f);
+
+            // animate to (0,0)
+            LeanTween.moveX(rt, 0f, 0.6f).setEaseOutExpo();
         }
     }
+
+    if (currentLevelIndex + 1 < levels.Count)
+    {
+        Debug.Log($"✅ LEVEL {levels[currentLevelIndex].levelName} COMPLETE!");
+    }
+    else
+    {
+        Debug.Log("🏆 ALL LEVELS COMPLETE! GAME OVER!");
+    }
+}
+
 
     public void NextLevel()
     {
@@ -362,10 +394,16 @@ public class CardManager : MonoBehaviour
     {
         LoadLevel(currentLevelIndex);
     }
+    public GameObject panel;
+    public GameObject mainmenupanel;
+    public GameObject button;
 
     public void QuitGame()
     {
-        SceneManager.LoadScene("MainMenu");
+        panel.SetActive(false);
+        mainmenupanel.SetActive(true);
+        button.SetActive(false);
+       
     }
     public float GetGameTime()
     {

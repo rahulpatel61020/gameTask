@@ -54,22 +54,26 @@ public class MenuController : MonoBehaviour
     {
         Application.Quit();
     }
+    private void ForceOpaque(Image img, Color c)
+    {
+        c.a = 1f;              // force alpha to 1
+        img.color = c;
+    }
 
     private void ChangeTabLabel(Difficulty difficulty)
     {
-        // Reset all tabs to inactive
-        easyTab.GetComponent<Image>().color = inactiveColor;
-        normalTab.GetComponent<Image>().color = inactiveColor;
-        hardTab.GetComponent<Image>().color = inactiveColor;
+        ForceOpaque(easyTab.GetComponent<Image>(), inactiveColor);
+        ForceOpaque(normalTab.GetComponent<Image>(), inactiveColor);
+        ForceOpaque(hardTab.GetComponent<Image>(), inactiveColor);
 
-        // Highlight the active tab
         switch (difficulty)
         {
-            case Difficulty.Easy: easyTab.GetComponent<Image>().color = activeColor; break;
-            case Difficulty.Medium: normalTab.GetComponent<Image>().color = activeColor; break;
-            case Difficulty.Hard: hardTab.GetComponent<Image>().color = activeColor; break;
+            case Difficulty.Easy: ForceOpaque(easyTab.GetComponent<Image>(), activeColor); break;
+            case Difficulty.Medium: ForceOpaque(normalTab.GetComponent<Image>(), activeColor); break;
+            case Difficulty.Hard: ForceOpaque(hardTab.GetComponent<Image>(), activeColor); break;
         }
     }
+
 
     private void ChangeHighScoreList(HighScores highScores)
     {
