@@ -14,7 +14,7 @@ public class CardManager : MonoBehaviour
     [Header("Levels")]
     public List<LevelConfig> levels;
     public int currentLevelIndex = 0;
-
+    public GameObject endgamepanel;
     [Header("Audio")]
     public AudioSource sfxSource;
     public AudioClip flipClip, matchClip, mismatchClip, gameOverClip;
@@ -40,11 +40,13 @@ public class CardManager : MonoBehaviour
     private int moveCounter; // counts PAIRS flipped
 
     [System.Serializable]
+   
     public class LevelConfig
     {
         public string levelName;
         public int rows;
         public int cols;
+        public Difficulty difficulty; // ✅ new field visible in Inspector
     }
 
     private void Start()
@@ -85,6 +87,23 @@ public class CardManager : MonoBehaviour
 
         currentLevelIndex = Mathf.Clamp(levelIndex, 0, levels.Count - 1);
         LevelConfig config = levels[currentLevelIndex];
+        switch (config.difficulty)
+        {
+            case Difficulty.Easy:
+                Debug.Log("Easy Mode: Slower reveal, more forgiving");
+                StartCoroutine(RevealAllCards(2f)); // show 2 seconds
+                break;
+
+            case Difficulty.Medium:
+                Debug.Log("Medium Mode: Standard rules");
+                StartCoroutine(RevealAllCards(1.2f));
+                break;
+
+            case Difficulty.Hard:
+                Debug.Log("Hard Mode: Quick reveal, faster play");
+                StartCoroutine(RevealAllCards(0.7f));
+                break;
+        }
 
         int totalCards = config.rows * config.cols;
         if (totalCards % 2 != 0)
@@ -108,10 +127,10 @@ public class CardManager : MonoBehaviour
         StartCoroutine(RevealAllCards());
     }
 
-    IEnumerator RevealAllCards()
+    IEnumerator RevealAllCards(float revealDuration = 1.2f)
     {
         foreach (var c in allCards) c.ShowInstant();
-        yield return new WaitForSeconds(1.2f);
+        yield return new WaitForSeconds(revealDuration);
         foreach (var c in allCards) c.Hide();
     }
 
@@ -296,13 +315,39 @@ public class CardManager : MonoBehaviour
     private void GameOver()
     {
         timerRunning = false; // stop timer
-
-        if (currentLevelIndex + 1 < levels.Count)
-            Debug.Log($"✅ LEVEL {levels[currentLevelIndex].levelName} COMPLETE!");
-        else
-            Debug.Log("🏆 ALL LEVELS COMPLETE! GAME OVER!");
-
         PlaySfx(gameOverClip);
+
+        // --- Save High Score ---
+        LevelConfig config = levels[currentLevelIndex];
+        Difficulty diff = config.difficulty;
+
+        // Calculate score
+        int finalScore = HighScoreHelper.CalculateHighScore(
+            Mathf.FloorToInt(levelTimer),
+            moveCounter,
+            diff
+        );
+
+        // Get Player Name from PlayerPrefs or default
+        string playerName = PlayerPrefs.GetString("PlayerName", "Player");
+
+        // Load → Add → Save
+        HighScores hs = HighScoreHelper.LoadHighScores(diff);
+        ScoreEntry newEntry = new ScoreEntry(playerName, finalScore);
+        HighScoreHelper.AddHighScore(hs, newEntry);
+        HighScoreHelper.SaveHighScore(hs, diff);
+
+        // --- Show End Panel ---
+        if (currentLevelIndex + 1 < levels.Count)
+        {
+            Debug.Log($"✅ LEVEL {levels[currentLevelIndex].levelName} COMPLETE!");
+            endgamepanel.SetActive(true);
+        }
+        else
+        {
+            Debug.Log("🏆 ALL LEVELS COMPLETE! GAME OVER!");
+            endgamepanel.SetActive(true);
+        }
     }
 
     public void NextLevel()
@@ -322,4 +367,15 @@ public class CardManager : MonoBehaviour
     {
         SceneManager.LoadScene("MainMenu");
     }
+    public float GetGameTime()
+    {
+        return levelTimer;
+    }
+
+}
+public enum Difficulty
+{
+    Easy,
+    Medium,
+    Hard
 }
