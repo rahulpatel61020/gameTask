@@ -10,6 +10,7 @@ GameObject:
   m_Component:
   - component: {fileID: 639125569639374951}
   - component: {fileID: 639125569639374948}
+  - component: {fileID: 8893745810506379037}
   m_Layer: 0
   m_Name: CardController
   m_TagString: Untagged
@@ -59,9 +60,33 @@ MonoBehaviour:
   - levelName: easy
     rows: 5
     cols: 6
+    difficulty: 0
   currentLevelIndex: 0
+  endgamepanel: {fileID: 0}
   sfxSource: {fileID: 0}
   flipClip: {fileID: 0}
   matchClip: {fileID: 0}
   mismatchClip: {fileID: 0}
   gameOverClip: {fileID: 0}
+  matchEffectPrefab: {fileID: 0}
+  scoreText: {fileID: 0}
+  timerText: {fileID: 0}
+  moveText: {fileID: 0}
+  panel: {fileID: 0}
+  mainmenupanel: {fileID: 0}
+--- !u!208 &8893745810506379037
+NavMeshObstacle:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 639125569639374949}
+  m_Enabled: 1
+  serializedVersion: 3
+  m_Shape: 1
+  m_Extents: {x: 0.5, y: 0.5, z: 0.5}
+  m_MoveThreshold: 0.1
+  m_Carve: 0
+  m_CarveOnlyStationary: 1
+  m_Center: {x: 0, y: 0, z: 0}
+  m_TimeToStationary: 0.5

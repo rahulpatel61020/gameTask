@@ -15,6 +15,7 @@ public class CardManager : MonoBehaviour
     public List<LevelConfig> levels;
     public int currentLevelIndex = 0;
     public GameObject endgamepanel;
+
     [Header("Audio")]
     public AudioSource sfxSource;
     public AudioClip flipClip, matchClip, mismatchClip, gameOverClip;
@@ -22,8 +23,12 @@ public class CardManager : MonoBehaviour
     [Header("FX")]
     public ParticleSystem matchEffectPrefab;
     public TMP_Text scoreText;
-    public TMP_Text timerText;      // UI text for timer
-    public TMP_Text moveText;       // UI text for move counter
+    public TMP_Text timerText;
+    public TMP_Text moveText;
+
+    [Header("UI Panels")]
+    public GameObject panel;
+    public GameObject mainmenupanel;
 
     private CardGridLayout cardGridLayout;
     private List<Sprite> spritePairs;
@@ -37,16 +42,30 @@ public class CardManager : MonoBehaviour
 
     private float levelTimer;
     private bool timerRunning;
-    private int moveCounter; // counts PAIRS flipped
+    private int moveCounter;
+
+    private string saveKey = "CardGameSave";
 
     [System.Serializable]
-   
     public class LevelConfig
     {
         public string levelName;
         public int rows;
         public int cols;
-        public Difficulty difficulty; // ✅ new field visible in Inspector
+        public Difficulty difficulty;
+    }
+
+    [System.Serializable]
+    public class SaveData
+    {
+        public int currentLevelIndex;
+        public float levelTimer;
+        public int moveCounter;
+        public int score;
+        public int matchedPairs;
+        public List<int> matchedCardIndexes = new List<int>();
+        public List<int> spriteIndexes = new List<int>();
+        public bool isGameOver;
     }
 
     private void Start()
@@ -55,12 +74,14 @@ public class CardManager : MonoBehaviour
         if (cardGridLayout == null)
             cardGridLayout = gridTransform.gameObject.AddComponent<CardGridLayout>();
 
-        LoadLevel(currentLevelIndex);
+        if (PlayerPrefs.HasKey(saveKey))
+            LoadProgress();
+        else
+            LoadLevel(currentLevelIndex);
     }
 
     private void Update()
     {
-        // --- Timer ---
         if (timerRunning)
         {
             levelTimer += Time.deltaTime;
@@ -68,71 +89,286 @@ public class CardManager : MonoBehaviour
         }
     }
 
-    public void LoadLevel(int levelIndex)
+    // ============================================================
+    // SAVE / LOAD SYSTEM
+    // ============================================================
+
+    public void SaveProgress()
     {
+        SaveData data = new SaveData();
+        data.currentLevelIndex = currentLevelIndex;
+        data.levelTimer = levelTimer;
+        data.moveCounter = moveCounter;
+        data.score = score;
+        data.matchedPairs = matchedPairs;
+        data.isGameOver = false;
+
+        data.matchedCardIndexes = new List<int>();
+        data.spriteIndexes = new List<int>();
+
+        for (int i = 0; i < allCards.Count; i++)
+        {
+            int spriteIndex = System.Array.IndexOf(sprites, allCards[i].iconSprite);
+            data.spriteIndexes.Add(spriteIndex);
+
+            if (!allCards[i].GetComponent<Button>().interactable)
+                data.matchedCardIndexes.Add(i);
+        }
+
+        string json = JsonUtility.ToJson(data);
+        string key = GetSaveKey(currentLevelIndex);
+        PlayerPrefs.SetString(key, json);
+        PlayerPrefs.Save();
+
+        Debug.Log($"💾 Progress Saved for Level {currentLevelIndex}");
+    }
+
+    public void LoadProgress()
+    {
+        if (!PlayerPrefs.HasKey(saveKey))
+        {
+            Debug.Log("⚠ No global save found!");
+            LoadLevel(currentLevelIndex);
+            return;
+        }
+
+        string globalJson = PlayerPrefs.GetString(saveKey);
+        SaveData globalData = JsonUtility.FromJson<SaveData>(globalJson);
+
+        currentLevelIndex = globalData.currentLevelIndex;
+
+        // Try per-level save
+        string levelKey = GetSaveKey(currentLevelIndex);
+        if (PlayerPrefs.HasKey(levelKey))
+        {
+            string json = PlayerPrefs.GetString(levelKey);
+            SaveData data = JsonUtility.FromJson<SaveData>(json);
+
+            // ✅ Only resume if game is NOT over
+            if (!data.isGameOver)
+            {
+                Debug.Log("📂 Resuming unfinished game");
+                LoadLevel(currentLevelIndex, data);
+                return;
+            }
+            else
+            {
+                // ✅ Level was completed - clear it and start fresh
+                Debug.Log("🔄 Level was completed previously, starting fresh");
+                PlayerPrefs.DeleteKey(levelKey);
+            }
+        }
+
+        Debug.Log("▶ Starting fresh");
+        LoadLevel(currentLevelIndex);
+    }
+
+    public void ClearProgress()
+    {
+        PlayerPrefs.DeleteKey(saveKey);
+
+        // ✅ Clear all level-specific saves
+        for (int i = 0; i < levels.Count; i++)
+        {
+            string key = GetSaveKey(i);
+            if (PlayerPrefs.HasKey(key))
+                PlayerPrefs.DeleteKey(key);
+        }
+
+        PlayerPrefs.Save();
+        Debug.Log("🗑 All Progress Cleared!");
+    }
+
+    public void ContinueGame(int levelIndex)
+    {
+        string key = GetSaveKey(levelIndex);
+
+        if (PlayerPrefs.HasKey(key))
+        {
+            string json = PlayerPrefs.GetString(key);
+            SaveData data = JsonUtility.FromJson<SaveData>(json);
+
+            // ✅ Only resume if NOT completed
+            if (!data.isGameOver && data.currentLevelIndex == levelIndex)
+            {
+                Debug.Log($"📂 Resuming saved game for Level {levelIndex}");
+                LoadLevel(levelIndex, data);
+                return;
+            }
+            else if (data.isGameOver)
+            {
+                // ✅ Level was completed - clear it and start fresh
+                Debug.Log($"🔄 Level {levelIndex} was completed, starting fresh");
+                PlayerPrefs.DeleteKey(key);
+            }
+        }
+
+        Debug.Log($"▶ Starting fresh for Level {levelIndex}");
+        LoadLevel(levelIndex);
+    }
+
+    private string GetSaveKey(int levelIndex)
+    {
+        return $"CardGameSave_Level_{levelIndex}";
+    }
+
+    // ============================================================
+    // LEVEL LOADING & GAMEPLAY
+    // ============================================================
+
+    public void LoadLevel(int levelIndex, SaveData saveData = null)
+    {
+        // ✅ Stop timer immediately
+        timerRunning = false;
+
+        // ✅ Cancel all LeanTween animations on the grid
+        LeanTween.cancel(gridTransform.gameObject);
+
+        // Clear existing cards completely
         foreach (Transform child in gridTransform)
+        {
+            // Cancel any ongoing animations on cards
+            LeanTween.cancel(child.gameObject);
             Destroy(child.gameObject);
+        }
 
         openCards.Clear();
         allCards.Clear();
-        score = 0;
-        matchedPairs = 0;
-        moveCounter = 0;
-        levelTimer = 0f;
-        timerRunning = true;
 
+        // ✅ Reset checking state
+        isChecking = false;
+
+        // Initialize or restore game state
+        if (saveData == null)
+        {
+            // Fresh start
+            score = 0;
+            matchedPairs = 0;
+            moveCounter = 0;
+            levelTimer = 0f;
+
+            // ✅ Clear any existing save for this level
+            string key = GetSaveKey(levelIndex);
+            if (PlayerPrefs.HasKey(key))
+            {
+                PlayerPrefs.DeleteKey(key);
+                Debug.Log($"🗑 Cleared old save for Level {levelIndex}");
+            }
+        }
+        else
+        {
+            // ✅ Restore saved state
+            score = saveData.score;
+            matchedPairs = saveData.matchedPairs;
+            moveCounter = saveData.moveCounter;
+            levelTimer = saveData.levelTimer;
+            Debug.Log($"📂 Restored: Score={score}, Pairs={matchedPairs}, Moves={moveCounter}, Time={levelTimer:F1}s");
+        }
+
+        // Update UI
         UpdateScoreUI();
         UpdateTimerUI();
         UpdateMoveUI();
 
+        // Load level config
         currentLevelIndex = Mathf.Clamp(levelIndex, 0, levels.Count - 1);
         LevelConfig config = levels[currentLevelIndex];
-        switch (config.difficulty)
-        {
-            case Difficulty.Easy:
-                Debug.Log("Easy Mode: Slower reveal, more forgiving");
-                StartCoroutine(RevealAllCards(2f)); // show 2 seconds
-                break;
-
-            case Difficulty.Medium:
-                Debug.Log("Medium Mode: Standard rules");
-                StartCoroutine(RevealAllCards(1.2f));
-                break;
-
-            case Difficulty.Hard:
-                Debug.Log("Hard Mode: Quick reveal, faster play");
-                StartCoroutine(RevealAllCards(0.7f));
-                break;
-        }
 
         int totalCards = config.rows * config.cols;
         if (totalCards % 2 != 0)
         {
-            Debug.LogError($"Grid {config.rows}x{config.cols} is not even! Needs an even number of cards.");
+            Debug.LogError($"❌ Grid {config.rows}x{config.cols} is not even! Needs an even number of cards.");
             return;
         }
 
         totalPairs = totalCards / 2;
 
+        // Setup grid layout
         cardGridLayout.rows = config.rows;
         cardGridLayout.colums = config.cols;
         cardGridLayout.spacing = new Vector2(15, 15);
         cardGridLayout.preferredTopPadding = 20;
 
+        // Prepare sprites
         PrepareSprites(totalPairs);
-        CreateCards(totalCards);
 
-        Debug.Log($"Loaded level: {config.levelName} ({config.rows}x{config.cols})");
+        // Create cards
+        for (int i = 0; i < totalCards; i++)
+        {
+            card c = Instantiate(cardPrefab, gridTransform);
 
-        StartCoroutine(RevealAllCards());
+            // Assign sprite
+            if (saveData != null && i < saveData.spriteIndexes.Count)
+                c.SetIconSprite(sprites[saveData.spriteIndexes[i]]);
+            else
+                c.SetIconSprite(spritePairs[i]);
+
+            c.controller = this;
+            allCards.Add(c);
+
+            // ✅ Reset scale to normal
+            c.transform.localScale = Vector3.one;
+
+            // Apply saved state (matched or unmatched)
+            if (saveData != null && saveData.matchedCardIndexes.Contains(i))
+            {
+                // Matched card - disable and hide
+                c.GetComponent<Button>().interactable = false;
+                foreach (var img in c.GetComponentsInChildren<Image>())
+                    img.enabled = false;
+            }
+            else
+            {
+                // Unmatched card - enable and show
+                c.GetComponent<Button>().interactable = true;
+                foreach (var img in c.GetComponentsInChildren<Image>())
+                    img.enabled = true;
+            }
+        }
+
+        Debug.Log($"✅ Loaded level: {config.levelName} ({config.rows}x{config.cols})");
+
+        // ✅ Start timer after setup
+        timerRunning = true;
+
+        // Show reveal animation only for fresh games
+        if (saveData == null)
+            StartCoroutine(DelayedReveal(config));
+    }
+
+    private IEnumerator DelayedReveal(LevelConfig config)
+    {
+        yield return null;
+        LayoutRebuilder.ForceRebuildLayoutImmediate(gridTransform as RectTransform);
+
+        switch (config.difficulty)
+        {
+            case Difficulty.Easy:
+                StartCoroutine(RevealAllCards(2f));
+                break;
+            case Difficulty.Medium:
+                StartCoroutine(RevealAllCards(1.2f));
+                break;
+            case Difficulty.Hard:
+                StartCoroutine(RevealAllCards(0.7f));
+                break;
+        }
     }
 
     IEnumerator RevealAllCards(float revealDuration = 1.2f)
     {
-        foreach (var c in allCards) c.ShowInstant();
+        foreach (var c in allCards)
+            c.ShowInstant();
+
         yield return new WaitForSeconds(revealDuration);
-        foreach (var c in allCards) c.Hide();
+
+        foreach (var c in allCards)
+            c.Hide();
     }
+
+    // ============================================================
+    // CARD INTERACTION & MATCHING
+    // ============================================================
 
     public void SetSelected(card c)
     {
@@ -141,17 +377,16 @@ public class CardManager : MonoBehaviour
             PlaySfx(flipClip);
             c.Show(() =>
             {
-                // Only add AFTER the flip finishes
                 openCards.Add(c);
                 CheckOpenCards();
             });
         }
     }
- 
 
     private void CheckOpenCards()
     {
-        if (openCards.Count < 2) return;
+        if (openCards.Count < 2)
+            return;
 
         moveCounter++;
         UpdateMoveUI();
@@ -159,21 +394,17 @@ public class CardManager : MonoBehaviour
         var a = openCards[openCards.Count - 2];
         var b = openCards[openCards.Count - 1];
 
-        // Make sure both cards flip fully before comparing
         StartCoroutine(WaitForFlipThenCheck(a, b));
     }
 
     IEnumerator WaitForFlipThenCheck(card a, card b)
     {
-        // ⏳ Wait until both finished animating
         yield return new WaitUntil(() => !a.IsAnimating && !b.IsAnimating);
-
-        // Optional: small pause so both faces are visible
         yield return new WaitForSeconds(0.1f);
 
-        // Now compare
         if (a.iconSprite == b.iconSprite)
         {
+            // Match found!
             PlaySfx(matchClip);
             matchedPairs++;
             score++;
@@ -185,19 +416,20 @@ public class CardManager : MonoBehaviour
         }
         else
         {
+            // No match
             StartCoroutine(HidePair(a, b));
         }
     }
-
-
 
     IEnumerator HidePair(card a, card b)
     {
         isChecking = true;
         yield return new WaitForSeconds(0.5f);
+
         a.Hide();
         b.Hide();
         PlaySfx(mismatchClip);
+
         openCards.Clear();
         isChecking = false;
     }
@@ -209,12 +441,12 @@ public class CardManager : MonoBehaviour
         float popDuration = 0.2f;
         float shrinkDuration = 0.3f;
 
-        // Pop up animation
+        // Pop animation
         LeanTween.scale(a.gameObject, Vector3.one * 1.2f, popDuration).setEaseOutBack();
         LeanTween.scale(b.gameObject, Vector3.one * 1.2f, popDuration).setEaseOutBack();
         yield return new WaitForSeconds(popDuration + 0.05f);
 
-        // FX
+        // Spawn particle effects
         if (matchEffectPrefab && gridTransform != null)
         {
             Canvas canvas = gridTransform.GetComponentInParent<Canvas>();
@@ -229,19 +461,31 @@ public class CardManager : MonoBehaviour
         LeanTween.scale(b.gameObject, Vector3.zero, shrinkDuration).setEaseInBack();
         yield return new WaitForSeconds(shrinkDuration);
 
-        // Leave blank slots but disable visuals & clicks
+        // Disable cards
         a.GetComponent<Button>().interactable = false;
         b.GetComponent<Button>().interactable = false;
 
-        foreach (var img in a.GetComponentsInChildren<Image>()) img.enabled = false;
-        foreach (var img in b.GetComponentsInChildren<Image>()) img.enabled = false;
-
-        foreach (var img in b.GetComponentsInChildren<Image>()) img.enabled = false;
+        foreach (var img in a.GetComponentsInChildren<Image>())
+            img.enabled = false;
+        foreach (var img in b.GetComponentsInChildren<Image>())
+            img.enabled = false;
 
         openCards.Clear();
         isChecking = false;
+
+        // Check if this was the last pair before saving
+        bool wasLastPair = (matchedPairs >= totalPairs);
+
+        // Save progress after each match (only if game not over)
+        if (!wasLastPair)
+        {
+            SaveProgress();
+        }
     }
 
+    // ============================================================
+    // VISUAL EFFECTS
+    // ============================================================
 
     private void SpawnFXOnCanvas(Canvas canvas, Vector3 worldPos)
     {
@@ -269,15 +513,20 @@ public class CardManager : MonoBehaviour
         );
     }
 
-    // --- Utility ---
+    // ============================================================
+    // SPRITE MANAGEMENT
+    // ============================================================
+
     public void PrepareSprites(int pairCount)
     {
         spritePairs = new List<Sprite>();
+
         for (int i = 0; i < pairCount; i++)
         {
             spritePairs.Add(sprites[i % sprites.Length]);
             spritePairs.Add(sprites[i % sprites.Length]);
         }
+
         Shuffle(spritePairs);
     }
 
@@ -299,12 +548,19 @@ public class CardManager : MonoBehaviour
             c.controller = this;
             allCards.Add(c);
         }
+
+        Canvas.ForceUpdateCanvases();
         LayoutRebuilder.ForceRebuildLayoutImmediate(gridTransform as RectTransform);
     }
 
+    // ============================================================
+    // AUDIO & UI UPDATES
+    // ============================================================
+
     private void PlaySfx(AudioClip clip)
     {
-        if (sfxSource && clip) sfxSource.PlayOneShot(clip);
+        if (sfxSource && clip)
+            sfxSource.PlayOneShot(clip);
     }
 
     private void UpdateScoreUI()
@@ -329,88 +585,93 @@ public class CardManager : MonoBehaviour
             moveText.text = $"Moves: {moveCounter}";
     }
 
-    // --- Game Control ---
- private void GameOver()
-{
-    timerRunning = false; // stop timer
-    PlaySfx(gameOverClip);
+    // ============================================================
+    // GAME CONTROL
+    // ============================================================
 
-    // --- Save High Score ---
-    LevelConfig config = levels[currentLevelIndex];
-    Difficulty diff = config.difficulty;
-
-    // Calculate score
-    int finalScore = HighScoreHelper.CalculateHighScore(
-        Mathf.FloorToInt(levelTimer),
-        moveCounter,
-        diff
-    );
-
-    // Get Player Name from PlayerPrefs or default
-    string playerName = PlayerPrefs.GetString("PlayerName", "Player");
-
-    // Load → Add → Save
-    HighScores hs = HighScoreHelper.LoadHighScores(diff);
-    ScoreEntry newEntry = new ScoreEntry(playerName, finalScore);
-    HighScoreHelper.AddHighScore(hs, newEntry);
-    HighScoreHelper.SaveHighScore(hs, diff);
-
-    // --- Show End Panel with animation ---
-    if (endgamepanel != null)
+    private void GameOver()
     {
-        endgamepanel.SetActive(true);
+        timerRunning = false;
+        PlaySfx(gameOverClip);
 
-        RectTransform rt = endgamepanel.GetComponent<RectTransform>();
-        if (rt != null)
+        // ✅ CRITICAL: Delete level-specific save FIRST
+        string levelKey = GetSaveKey(currentLevelIndex);
+        if (PlayerPrefs.HasKey(levelKey))
         {
-            // reset position offscreen first
-            rt.anchoredPosition = new Vector2(-1200f, 0f);
-
-            // animate to (0,0)
-            LeanTween.moveX(rt, 0f, 0.6f).setEaseOutExpo();
+            PlayerPrefs.DeleteKey(levelKey);
+            Debug.Log($"🗑 Cleared level {currentLevelIndex} save on completion");
         }
-    }
 
-    if (currentLevelIndex + 1 < levels.Count)
-    {
-        Debug.Log($"✅ LEVEL {levels[currentLevelIndex].levelName} COMPLETE!");
-    }
-    else
-    {
-        Debug.Log("🏆 ALL LEVELS COMPLETE! GAME OVER!");
-    }
-}
+        // Show end game panel
+        if (endgamepanel != null)
+        {
+            endgamepanel.SetActive(true);
+            RectTransform rt = endgamepanel.GetComponent<RectTransform>();
+            if (rt != null)
+            {
+                rt.anchoredPosition = new Vector2(-1200f, 0f);
+                LeanTween.moveX(rt, 0f, 0.6f).setEaseOutExpo();
+            }
+        }
 
+        // Save completion to global save
+        SaveData data = new SaveData();
+        data.currentLevelIndex = currentLevelIndex;
+        data.levelTimer = levelTimer;
+        data.moveCounter = moveCounter;
+        data.score = score;
+        data.matchedPairs = matchedPairs;
+        data.isGameOver = true;
+
+        string json = JsonUtility.ToJson(data);
+        PlayerPrefs.SetString(saveKey, json);
+        PlayerPrefs.Save();
+
+        Debug.Log($"🎉 Game Over - Level {currentLevelIndex} completed!");
+    }
 
     public void NextLevel()
     {
         if (currentLevelIndex + 1 < levels.Count)
             LoadLevel(currentLevelIndex + 1);
         else
-            GameOver();
+            Debug.Log("🏆 All levels completed!");
     }
 
     public void RestartGame()
     {
-        LoadLevel(currentLevelIndex);
+        // ✅ Pass null to force fresh start with new shuffled cards
+        LoadLevel(currentLevelIndex, null);
     }
-    public GameObject panel;
-    public GameObject mainmenupanel;
-    public GameObject button;
 
     public void QuitGame()
     {
-        panel.SetActive(false);
-        mainmenupanel.SetActive(true);
-        button.SetActive(false);
-       
+        if (panel != null)
+            panel.SetActive(false);
+
+        if (mainmenupanel != null)
+            mainmenupanel.SetActive(true);
     }
+
+    public void ExitApplication()
+    {
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#else
+        Application.Quit();
+#endif
+    }
+
+    // ============================================================
+    // PUBLIC GETTERS
+    // ============================================================
+
     public float GetGameTime()
     {
         return levelTimer;
     }
-
 }
+
 public enum Difficulty
 {
     Easy,

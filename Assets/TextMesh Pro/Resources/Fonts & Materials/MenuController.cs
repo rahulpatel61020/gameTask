@@ -12,7 +12,10 @@ public class MenuController : MonoBehaviour
 
     [Header("High Score UI")]
     public GameObject highScoreUIPrefab;   // prefab row with TMP_Text children "Name" and "Score"
-    public Transform highScoreList;        // parent container (Vertical/Horizontal Layout Group)
+    public Transform highScoreList; 
+   
+    [Header("Continue Button")]
+    public Button continueButton;
 
     [Header("Tabs")]
     public GameObject easyTab;
@@ -23,10 +26,23 @@ public class MenuController : MonoBehaviour
     public Color activeColor = Color.white;
     public Color inactiveColor = Color.gray;
 
+    private string saveKey = "CardGameSave";
     void Awake()
     {
         playMenuPanel.SetActive(false);
         highScoreMenuPanel.SetActive(false);
+        continueButton.gameObject.SetActive(PlayerPrefs.HasKey(saveKey));
+    }
+    public void ContinueGame()
+    {
+        // Just load the game scene (CardManager will auto-load save in Start())
+        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex + 1);
+    }
+    public void NewGame(int difficulty)
+    {
+        PlayerPrefs.DeleteKey(saveKey); // fresh start
+        PlayerPrefs.SetInt("Difficulty", difficulty);
+        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex + 1);
     }
 
     void Start()
@@ -72,6 +88,15 @@ public class MenuController : MonoBehaviour
             case Difficulty.Medium: ForceOpaque(normalTab.GetComponent<Image>(), activeColor); break;
             case Difficulty.Hard: ForceOpaque(hardTab.GetComponent<Image>(), activeColor); break;
         }
+    }
+    void OnEnable()
+    {
+        continueButton.gameObject.SetActive(PlayerPrefs.HasKey("CardGameSave"));
+    }
+
+    public void UpdateContinueButton()
+    {
+        continueButton.gameObject.SetActive(PlayerPrefs.HasKey(saveKey));
     }
 
 

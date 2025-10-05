@@ -65,6 +65,25 @@ public class card : MonoBehaviour
         isSelcted = false;
         Flip(hiddeniconSprite);  // 👈 flip back to hidden sprite
     }
+    public void ResetVisuals()
+    {
+        // Always start hidden & interactable
+        isSelcted = false;
+        isAnimating = false;
+
+        var btn = GetComponent<Button>();
+        if (btn != null)
+            btn.interactable = true;
+
+        var images = GetComponentsInChildren<Image>(true);
+        foreach (var img in images)
+            img.enabled = true;
+
+        if (iconimage != null)
+            iconimage.sprite = hiddeniconSprite;
+
+        transform.localScale = Vector3.one;
+    }
 
     public void ShowInstant()
     {
