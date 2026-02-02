@@ -29,6 +29,7 @@ public class CardManager : MonoBehaviour
     [Header("UI Panels")]
     public GameObject panel;
     public GameObject mainmenupanel;
+    public Button continueButton;
 
     private CardGridLayout cardGridLayout;
     private List<Sprite> spritePairs;
@@ -39,6 +40,7 @@ public class CardManager : MonoBehaviour
     private int matchedPairs;
     private int totalPairs;
     private bool isChecking = false;
+    private bool isProcessingMatch = false; // New flag to prevent race conditions
 
     private float levelTimer;
     private bool timerRunning;
@@ -74,6 +76,18 @@ public class CardManager : MonoBehaviour
         if (cardGridLayout == null)
             cardGridLayout = gridTransform.gameObject.AddComponent<CardGridLayout>();
 
+        RefreshContinueButton();
+
+        StartCoroutine(DelayedStart());
+    }
+
+    private IEnumerator DelayedStart()
+    {
+        yield return new WaitForEndOfFrame();
+        yield return null;
+
+        Canvas.ForceUpdateCanvases();
+
         if (PlayerPrefs.HasKey(saveKey))
             LoadProgress();
         else
@@ -86,6 +100,43 @@ public class CardManager : MonoBehaviour
         {
             levelTimer += Time.deltaTime;
             UpdateTimerUI();
+        }
+    }
+
+    // ============================================================
+    // MOBILE LIFECYCLE (Auto-Save)
+    // ============================================================
+
+    private void OnApplicationPause(bool pauseStatus)
+    {
+        if (pauseStatus)
+        {
+            if (timerRunning && matchedPairs < totalPairs)
+            {
+                SaveProgress();
+                Debug.Log("💾 Auto-saved on app pause");
+            }
+        }
+    }
+
+    private void OnApplicationQuit()
+    {
+        if (timerRunning && matchedPairs < totalPairs)
+        {
+            SaveProgress();
+            Debug.Log("💾 Auto-saved on app quit");
+        }
+    }
+
+    private void OnApplicationFocus(bool hasFocus)
+    {
+        if (!hasFocus)
+        {
+            if (timerRunning && matchedPairs < totalPairs)
+            {
+                SaveProgress();
+                Debug.Log("💾 Auto-saved on focus loss");
+            }
         }
     }
 
@@ -116,8 +167,10 @@ public class CardManager : MonoBehaviour
         }
 
         string json = JsonUtility.ToJson(data);
-        string key = GetSaveKey(currentLevelIndex);
-        PlayerPrefs.SetString(key, json);
+
+        string levelKey = GetSaveKey(currentLevelIndex);
+        PlayerPrefs.SetString(levelKey, json);
+        PlayerPrefs.SetString(saveKey, json);
         PlayerPrefs.Save();
 
         Debug.Log($"💾 Progress Saved for Level {currentLevelIndex}");
@@ -137,14 +190,19 @@ public class CardManager : MonoBehaviour
 
         currentLevelIndex = globalData.currentLevelIndex;
 
-        // Try per-level save
+        if (globalData.isGameOver)
+        {
+            Debug.Log($"🔄 Level {currentLevelIndex} was completed, restarting it");
+            LoadLevel(currentLevelIndex);
+            return;
+        }
+
         string levelKey = GetSaveKey(currentLevelIndex);
         if (PlayerPrefs.HasKey(levelKey))
         {
             string json = PlayerPrefs.GetString(levelKey);
             SaveData data = JsonUtility.FromJson<SaveData>(json);
 
-            // ✅ Only resume if game is NOT over
             if (!data.isGameOver)
             {
                 Debug.Log("📂 Resuming unfinished game");
@@ -153,7 +211,6 @@ public class CardManager : MonoBehaviour
             }
             else
             {
-                // ✅ Level was completed - clear it and start fresh
                 Debug.Log("🔄 Level was completed previously, starting fresh");
                 PlayerPrefs.DeleteKey(levelKey);
             }
@@ -167,7 +224,6 @@ public class CardManager : MonoBehaviour
     {
         PlayerPrefs.DeleteKey(saveKey);
 
-        // ✅ Clear all level-specific saves
         for (int i = 0; i < levels.Count; i++)
         {
             string key = GetSaveKey(i);
@@ -177,27 +233,44 @@ public class CardManager : MonoBehaviour
 
         PlayerPrefs.Save();
         Debug.Log("🗑 All Progress Cleared!");
+
+        RefreshContinueButton();
     }
 
-    public void ContinueGame(int levelIndex)
+    public void ContinueGame()
     {
-        string key = GetSaveKey(levelIndex);
+        if (!PlayerPrefs.HasKey(saveKey))
+        {
+            Debug.Log("⚠ No save found to continue!");
+            return;
+        }
 
+        string globalJson = PlayerPrefs.GetString(saveKey);
+        SaveData globalData = JsonUtility.FromJson<SaveData>(globalJson);
+
+        int levelIndex = globalData.currentLevelIndex;
+
+        if (globalData.isGameOver)
+        {
+            Debug.Log($"🔄 Level {levelIndex} was completed, restarting it");
+            LoadLevel(levelIndex);
+            return;
+        }
+
+        string key = GetSaveKey(levelIndex);
         if (PlayerPrefs.HasKey(key))
         {
             string json = PlayerPrefs.GetString(key);
             SaveData data = JsonUtility.FromJson<SaveData>(json);
 
-            // ✅ Only resume if NOT completed
-            if (!data.isGameOver && data.currentLevelIndex == levelIndex)
+            if (!data.isGameOver)
             {
                 Debug.Log($"📂 Resuming saved game for Level {levelIndex}");
                 LoadLevel(levelIndex, data);
                 return;
             }
-            else if (data.isGameOver)
+            else
             {
-                // ✅ Level was completed - clear it and start fresh
                 Debug.Log($"🔄 Level {levelIndex} was completed, starting fresh");
                 PlayerPrefs.DeleteKey(key);
             }
@@ -212,52 +285,85 @@ public class CardManager : MonoBehaviour
         return $"CardGameSave_Level_{levelIndex}";
     }
 
+    public void RefreshContinueButton()
+    {
+        if (continueButton != null)
+        {
+            bool hasSave = PlayerPrefs.HasKey(saveKey);
+            continueButton.gameObject.SetActive(hasSave);
+        }
+    }
+
     // ============================================================
     // LEVEL LOADING & GAMEPLAY
     // ============================================================
 
     public void LoadLevel(int levelIndex, SaveData saveData = null)
     {
-        // ✅ Stop timer immediately
         timerRunning = false;
 
-        // ✅ Cancel all LeanTween animations on the grid
+        // Stop all coroutines to prevent race conditions
+        StopAllCoroutines();
+
         LeanTween.cancel(gridTransform.gameObject);
 
-        // Clear existing cards completely
         foreach (Transform child in gridTransform)
         {
-            // Cancel any ongoing animations on cards
             LeanTween.cancel(child.gameObject);
             Destroy(child.gameObject);
         }
 
         openCards.Clear();
         allCards.Clear();
-
-        // ✅ Reset checking state
         isChecking = false;
+        isProcessingMatch = false;
 
-        // Initialize or restore game state
+        if (levelIndex != currentLevelIndex)
+        {
+            string oldLevelKey = GetSaveKey(currentLevelIndex);
+            if (PlayerPrefs.HasKey(oldLevelKey))
+            {
+                PlayerPrefs.DeleteKey(oldLevelKey);
+                Debug.Log($"🗑 Cleared in-progress save for Level {currentLevelIndex} (switching to Level {levelIndex})");
+            }
+        }
+
+        currentLevelIndex = Mathf.Clamp(levelIndex, 0, levels.Count - 1);
+
+        StartCoroutine(DelayedLoadLevel(saveData));
+    }
+
+    private IEnumerator DelayedLoadLevel(SaveData saveData)
+    {
+        yield return new WaitForEndOfFrame();
+
+        Canvas.ForceUpdateCanvases();
+
+        yield return null;
+
         if (saveData == null)
         {
-            // Fresh start
             score = 0;
             matchedPairs = 0;
             moveCounter = 0;
             levelTimer = 0f;
 
-            // ✅ Clear any existing save for this level
-            string key = GetSaveKey(levelIndex);
+            string key = GetSaveKey(currentLevelIndex);
             if (PlayerPrefs.HasKey(key))
             {
                 PlayerPrefs.DeleteKey(key);
-                Debug.Log($"🗑 Cleared old save for Level {levelIndex}");
+                Debug.Log($"🗑 Cleared old save for Level {currentLevelIndex}");
             }
+
+            SaveData globalData = new SaveData();
+            globalData.currentLevelIndex = currentLevelIndex;
+            globalData.isGameOver = false;
+            string globalJson = JsonUtility.ToJson(globalData);
+            PlayerPrefs.SetString(saveKey, globalJson);
+            PlayerPrefs.Save();
         }
         else
         {
-            // ✅ Restore saved state
             score = saveData.score;
             matchedPairs = saveData.matchedPairs;
             moveCounter = saveData.moveCounter;
@@ -265,39 +371,36 @@ public class CardManager : MonoBehaviour
             Debug.Log($"📂 Restored: Score={score}, Pairs={matchedPairs}, Moves={moveCounter}, Time={levelTimer:F1}s");
         }
 
-        // Update UI
         UpdateScoreUI();
         UpdateTimerUI();
         UpdateMoveUI();
 
-        // Load level config
-        currentLevelIndex = Mathf.Clamp(levelIndex, 0, levels.Count - 1);
         LevelConfig config = levels[currentLevelIndex];
 
         int totalCards = config.rows * config.cols;
         if (totalCards % 2 != 0)
         {
             Debug.LogError($"❌ Grid {config.rows}x{config.cols} is not even! Needs an even number of cards.");
-            return;
+            yield break;
         }
 
         totalPairs = totalCards / 2;
 
-        // Setup grid layout
         cardGridLayout.rows = config.rows;
         cardGridLayout.colums = config.cols;
         cardGridLayout.spacing = new Vector2(15, 15);
         cardGridLayout.preferredTopPadding = 20;
 
-        // Prepare sprites
+        LayoutRebuilder.ForceRebuildLayoutImmediate(gridTransform as RectTransform);
+
+        yield return null;
+
         PrepareSprites(totalPairs);
 
-        // Create cards
         for (int i = 0; i < totalCards; i++)
         {
             card c = Instantiate(cardPrefab, gridTransform);
 
-            // Assign sprite
             if (saveData != null && i < saveData.spriteIndexes.Count)
                 c.SetIconSprite(sprites[saveData.spriteIndexes[i]]);
             else
@@ -306,32 +409,33 @@ public class CardManager : MonoBehaviour
             c.controller = this;
             allCards.Add(c);
 
-            // ✅ Reset scale to normal
             c.transform.localScale = Vector3.one;
 
-            // Apply saved state (matched or unmatched)
             if (saveData != null && saveData.matchedCardIndexes.Contains(i))
             {
-                // Matched card - disable and hide
                 c.GetComponent<Button>().interactable = false;
                 foreach (var img in c.GetComponentsInChildren<Image>())
                     img.enabled = false;
             }
             else
             {
-                // Unmatched card - enable and show
                 c.GetComponent<Button>().interactable = true;
                 foreach (var img in c.GetComponentsInChildren<Image>())
                     img.enabled = true;
             }
         }
 
+        Canvas.ForceUpdateCanvases();
+        LayoutRebuilder.ForceRebuildLayoutImmediate(gridTransform as RectTransform);
+
+        yield return null;
+
         Debug.Log($"✅ Loaded level: {config.levelName} ({config.rows}x{config.cols})");
 
-        // ✅ Start timer after setup
         timerRunning = true;
 
-        // Show reveal animation only for fresh games
+        RefreshContinueButton();
+
         if (saveData == null)
             StartCoroutine(DelayedReveal(config));
     }
@@ -357,6 +461,9 @@ public class CardManager : MonoBehaviour
 
     IEnumerator RevealAllCards(float revealDuration = 1.2f)
     {
+        // Block input during reveal
+        isChecking = true;
+
         foreach (var c in allCards)
             c.ShowInstant();
 
@@ -364,6 +471,12 @@ public class CardManager : MonoBehaviour
 
         foreach (var c in allCards)
             c.Hide();
+
+        // Wait for hide animation to complete
+        yield return new WaitForSeconds(0.3f);
+
+        // Allow input after reveal
+        isChecking = false;
     }
 
     // ============================================================
@@ -372,34 +485,72 @@ public class CardManager : MonoBehaviour
 
     public void SetSelected(card c)
     {
-        if (!c.isSelcted && !isChecking)
+        // Don't allow selection if:
+        // - Currently checking/processing
+        // - Card is already selected/flipped
+        // - Card is already matched (not interactable)
+        if (isChecking || isProcessingMatch)
+            return;
+
+        if (c.isSelcted || !c.GetComponent<Button>().interactable)
+            return;
+
+        // If we already have 2 cards open, don't allow more
+        if (openCards.Count >= 2)
+            return;
+
+        // Check if this card is already in openCards (prevent double-tap)
+        if (openCards.Contains(c))
+            return;
+
+        PlaySfx(flipClip);
+
+        // Add to openCards BEFORE showing to prevent race condition
+        openCards.Add(c);
+
+        c.Show(() =>
         {
-            PlaySfx(flipClip);
-            c.Show(() =>
+            // Check if we need to evaluate the pair
+            // Only check if this card is still in openCards (wasn't cleared by a reset)
+            if (openCards.Count == 2 && openCards.Contains(c))
             {
-                openCards.Add(c);
                 CheckOpenCards();
-            });
-        }
+            }
+        });
     }
 
     private void CheckOpenCards()
     {
-        if (openCards.Count < 2)
+        if (openCards.Count != 2)
             return;
+
+        // Prevent multiple checks
+        if (isProcessingMatch)
+            return;
+
+        isProcessingMatch = true;
 
         moveCounter++;
         UpdateMoveUI();
 
-        var a = openCards[openCards.Count - 2];
-        var b = openCards[openCards.Count - 1];
+        var a = openCards[0];
+        var b = openCards[1];
 
         StartCoroutine(WaitForFlipThenCheck(a, b));
     }
 
     IEnumerator WaitForFlipThenCheck(card a, card b)
     {
-        yield return new WaitUntil(() => !a.IsAnimating && !b.IsAnimating);
+        // Wait for both cards to finish flipping with timeout
+        float timeout = 2f;
+        float elapsed = 0f;
+
+        while ((a.IsAnimating || b.IsAnimating) && elapsed < timeout)
+        {
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+
         yield return new WaitForSeconds(0.1f);
 
         if (a.iconSprite == b.iconSprite)
@@ -409,35 +560,54 @@ public class CardManager : MonoBehaviour
             matchedPairs++;
             score++;
             UpdateScoreUI();
-            StartCoroutine(DestroyPair(a, b));
 
-            if (matchedPairs >= totalPairs)
-                GameOver();
+            // Mark cards as matched IMMEDIATELY
+            a.GetComponent<Button>().interactable = false;
+            b.GetComponent<Button>().interactable = false;
+
+            // Clear openCards so player can flip next cards
+            openCards.Clear();
+
+            // Allow new card selections
+            isProcessingMatch = false;
+
+            // Check for game over
+            bool isGameOver = (matchedPairs >= totalPairs);
+
+            // Start animation (doesn't block new card flips)
+            StartCoroutine(DestroyPair(a, b, isGameOver));
         }
         else
         {
-            // No match
+            // No match - need to wait before allowing new flips
             StartCoroutine(HidePair(a, b));
         }
     }
 
     IEnumerator HidePair(card a, card b)
     {
+        // Block new selections while showing mismatch
         isChecking = true;
+
         yield return new WaitForSeconds(0.5f);
 
+        // Hide both cards
         a.Hide();
         b.Hide();
+
         PlaySfx(mismatchClip);
 
+        // Wait for hide animation to complete
+        yield return new WaitForSeconds(0.3f);
+
+        // Clear and allow new selections
         openCards.Clear();
+        isProcessingMatch = false;
         isChecking = false;
     }
 
-    IEnumerator DestroyPair(card a, card b)
+    IEnumerator DestroyPair(card a, card b, bool isGameOver)
     {
-        isChecking = true;
-
         float popDuration = 0.2f;
         float shrinkDuration = 0.3f;
 
@@ -461,23 +631,18 @@ public class CardManager : MonoBehaviour
         LeanTween.scale(b.gameObject, Vector3.zero, shrinkDuration).setEaseInBack();
         yield return new WaitForSeconds(shrinkDuration);
 
-        // Disable cards
-        a.GetComponent<Button>().interactable = false;
-        b.GetComponent<Button>().interactable = false;
-
+        // Hide card images
         foreach (var img in a.GetComponentsInChildren<Image>())
             img.enabled = false;
         foreach (var img in b.GetComponentsInChildren<Image>())
             img.enabled = false;
 
-        openCards.Clear();
-        isChecking = false;
-
-        // Check if this was the last pair before saving
-        bool wasLastPair = (matchedPairs >= totalPairs);
-
-        // Save progress after each match (only if game not over)
-        if (!wasLastPair)
+        // Handle game over or save progress
+        if (isGameOver)
+        {
+            GameOver();
+        }
+        else
         {
             SaveProgress();
         }
@@ -594,7 +759,6 @@ public class CardManager : MonoBehaviour
         timerRunning = false;
         PlaySfx(gameOverClip);
 
-        // ✅ CRITICAL: Delete level-specific save FIRST
         string levelKey = GetSaveKey(currentLevelIndex);
         if (PlayerPrefs.HasKey(levelKey))
         {
@@ -602,7 +766,6 @@ public class CardManager : MonoBehaviour
             Debug.Log($"🗑 Cleared level {currentLevelIndex} save on completion");
         }
 
-        // Show end game panel
         if (endgamepanel != null)
         {
             endgamepanel.SetActive(true);
@@ -614,7 +777,6 @@ public class CardManager : MonoBehaviour
             }
         }
 
-        // Save completion to global save
         SaveData data = new SaveData();
         data.currentLevelIndex = currentLevelIndex;
         data.levelTimer = levelTimer;
@@ -632,25 +794,44 @@ public class CardManager : MonoBehaviour
 
     public void NextLevel()
     {
+        if (endgamepanel != null)
+            endgamepanel.SetActive(false);
+
         if (currentLevelIndex + 1 < levels.Count)
+        {
             LoadLevel(currentLevelIndex + 1);
+        }
         else
+        {
             Debug.Log("🏆 All levels completed!");
+        }
     }
 
     public void RestartGame()
     {
-        // ✅ Pass null to force fresh start with new shuffled cards
+        if (endgamepanel != null)
+            endgamepanel.SetActive(false);
+
         LoadLevel(currentLevelIndex, null);
     }
 
     public void QuitGame()
     {
+        if (matchedPairs < totalPairs)
+        {
+            SaveProgress();
+        }
+
+        if (endgamepanel != null)
+            endgamepanel.SetActive(false);
+
         if (panel != null)
             panel.SetActive(false);
 
         if (mainmenupanel != null)
             mainmenupanel.SetActive(true);
+
+        RefreshContinueButton();
     }
 
     public void ExitApplication()
@@ -663,12 +844,64 @@ public class CardManager : MonoBehaviour
     }
 
     // ============================================================
+    // LEVEL SELECTION (Start Fresh - Ignores Saves)
+    // ============================================================
+
+    public void StartLevel(int levelIndex)
+    {
+        string oldLevelKey = GetSaveKey(currentLevelIndex);
+        if (PlayerPrefs.HasKey(oldLevelKey))
+        {
+            PlayerPrefs.DeleteKey(oldLevelKey);
+        }
+
+        string newLevelKey = GetSaveKey(levelIndex);
+        if (PlayerPrefs.HasKey(newLevelKey))
+        {
+            PlayerPrefs.DeleteKey(newLevelKey);
+        }
+
+        if (mainmenupanel != null)
+            mainmenupanel.SetActive(false);
+
+        if (panel != null)
+            panel.SetActive(true);
+
+        if (endgamepanel != null)
+            endgamepanel.SetActive(false);
+
+        LoadLevel(levelIndex, null);
+
+        Debug.Log($"▶ Started Level {levelIndex} fresh");
+    }
+
+    public void StartEasyLevel()
+    {
+        StartLevel(0);
+    }
+
+    public void StartMediumLevel()
+    {
+        StartLevel(1);
+    }
+
+    public void StartHardLevel()
+    {
+        StartLevel(2);
+    }
+
+    // ============================================================
     // PUBLIC GETTERS
     // ============================================================
 
     public float GetGameTime()
     {
         return levelTimer;
+    }
+
+    public bool HasSaveData()
+    {
+        return PlayerPrefs.HasKey(saveKey);
     }
 }
 
